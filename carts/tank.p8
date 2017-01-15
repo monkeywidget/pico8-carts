@@ -162,10 +162,17 @@ function draw_bullets() for b in all(bullets) do circfill( b.x, b.y, 1, 7) end e
 function draw_sparks() for s in all(sparks) do circ(s.x, s.y, 0, spark_colors[s.age]) end end
 function draw_smoke() for s in all(smoke) do circfill(s.x, s.y, s.radius, 5) end end
 
-function not_blocked(t,dir)
+-- TODO
+function xy_coords_to_grid(x,y)
+	return {x=10,y=10}
+end
+
+-- TODO: convert rocks{} and mines{} to use grid coords,
+function tank_not_blocked(dir)
 	return true
 end
 
+-- TODO: convert wall detection to use not_blocked
 mv_tank_helper = {
 	[l] = function() if tank.x > x_left_edge+4 then tank.x = tank.x -1 end end,
 	[r] = function() if tank.x < x_right_edge-4 then tank.x = tank.x +1 end end,
@@ -176,7 +183,7 @@ mv_tank_helper = {
 -- calls a table of functions
 -- for the different directions
 function move_tank(n)
-	if tank.t == n and not_blocked(tank,n) then
+	if tank.t == n and tank_not_blocked(n) then
 		mv_tank_helper[n]()
 	else
 		tank.t = n
