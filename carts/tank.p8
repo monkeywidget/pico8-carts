@@ -22,6 +22,10 @@ x_right_edge = board_size_x - x_left_edge
 y_top_edge = 8
 y_bottom_edge = board_size_y - y_top_edge
 
+MINE_GRID_UNIT = 8
+MINES_GRID_X_SIZE = (x_right_edge-x_left_edge)/MINE_GRID_UNIT
+MINES_GRID_Y_SIZE = (y_bottom_edge-y_top_edge)/MINE_GRID_UNIT
+
 function _init()
 	tank = {t=l} -- t=direction in (lrud), coords set in mines
 	-- dynamic things
@@ -56,12 +60,6 @@ end
 function spawn_mines()
 	tank.x = in_range(flr(rnd(x_right_edge)), x_left_edge+4, x_right_edge-4)
 	tank.y = in_range(flr(rnd(y_bottom_edge)), y_top_edge+4, y_bottom_edge-4)
-
-	MINE_GRID_UNIT = 8
-	-- grid will be indexed by strings X_Y
-	MINES_GRID_X_SIZE = (x_right_edge-x_left_edge)/MINE_GRID_UNIT
-	MINES_GRID_Y_SIZE = (y_bottom_edge-y_top_edge)/MINE_GRID_UNIT
-
 	cell_random_spawn_mines()
 end
 
@@ -164,6 +162,10 @@ function draw_bullets() for b in all(bullets) do circfill( b.x, b.y, 1, 7) end e
 function draw_sparks() for s in all(sparks) do circ(s.x, s.y, 0, spark_colors[s.age]) end end
 function draw_smoke() for s in all(smoke) do circfill(s.x, s.y, s.radius, 5) end end
 
+function not_blocked(t,dir)
+	return true
+end
+
 mv_tank_helper = {
 	[l] = function() if tank.x > x_left_edge+4 then tank.x = tank.x -1 end end,
 	[r] = function() if tank.x < x_right_edge-4 then tank.x = tank.x +1 end end,
@@ -174,7 +176,7 @@ mv_tank_helper = {
 -- calls a table of functions
 -- for the different directions
 function move_tank(n)
-	if tank.t == n then
+	if tank.t == n and not_blocked(tank,n) then
 		mv_tank_helper[n]()
 	else
 		tank.t = n
@@ -537,4 +539,3 @@ __music__
 00 41424344
 00 41424344
 00 41424344
-
