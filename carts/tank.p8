@@ -25,6 +25,7 @@ y_bottom_edge = board_size_y - y_top_edge
 mine_grid_unit = 8  -- how many pixels is one grid unit edge?
 mines_grid_x_size = (x_right_edge-x_left_edge)/mine_grid_unit
 mines_grid_y_size = (y_bottom_edge-y_top_edge)/mine_grid_unit
+mines_timer = 15
 
 function _init()
 	clock = 0
@@ -35,16 +36,40 @@ function _init()
 	-- dynamic things
 	bullets = {} -- a list - bullets use pixel coordinates
 	mines={} -- a list - mines use grid coordinates
-	rocks={} -- a list - rocks use grid coordinates
+	triggered_mines={} -- a list - mines use grid coordinates
 
+	rocks={} -- a list - rocks use grid coordinates
+	fireballs={} -- a list - fireballs use grid coordinates
+	grid={} -- a list of lists (2d array) with 'm' or 'r' or 'f' for objects
+
+	init_grid()
 	spawn_tank_and_mines()
 end
 
+function init_grid()
+	for i=1,(mines_grid_x_size-2) do
+		add(grid,{}) -- add an empty column
+		for j=1,(mines_grid_y_size-2) do clear_grid(i,j) end
+	end
+end
+
 -- utility method that combines missing math.min and math.max
-function in_range(x, min, max)
-	if x <= min then return min end
-  if x > max then return max end
-	return x
+function in_range(a, min, max)
+	if a <= min then return min end
+  if a > max then return max end
+	return a
+end
+
+-- missing math.min
+function min(a, b)
+	if a > b then return b end
+	return a
+end
+
+-- missing math.max
+function max(a, b)
+	if a < b then return b end
+	return a
 end
 
 -- given two objects a, b with attributes "x" and "y"
@@ -63,14 +88,25 @@ function spawn_tank_and_mines()
 	cell_random_spawn_mines()
 end
 
+function spawn_fireball(i,j)
+	add_to_grid(fireballs,{x=i,y=j,type='f',expiry=clock+mines_timer})
+end
+
+function clear_grid(x, y)
+	grid[x][y] = nil
+end
+
+function add_to_grid(object_table, xy_object)
+	add(object_table, xy_object)
+	grid[xy_object.x][xy_object.y] = xy_object
+end
+
 function cell_random_spawn_mines()
 	mine_probability = 0.25
 	rock_probability = 0.25
 
-	-- for every grid x coordinate
+	-- for every grid x and y coordinates:
 	for i=1,(mines_grid_x_size-2) do
-		-- define this column's contents:
-		-- for every grid y coordinate
 		for j=1,(mines_grid_y_size-2) do
 			lotto = rnd(1)
 
@@ -78,13 +114,11 @@ function cell_random_spawn_mines()
 			if closer_than(tank,
 										 grid_center_xy_coords(i,j),
 										 3*mine_grid_unit) then
-				-- (there is no "continue" in lua)
+				-- do nothing (there is no "continue" in lua)
 			elseif lotto < mine_probability then
-				add(mines, {x=i, y=j})
-				-- todo 0 make grid store
+				add_to_grid(mines, {x=i, y=j, type='m'})
 			elseif lotto < rock_probability + mine_probability then
-				add(rocks, {x=i, y=j})
-				-- todo 0 make grid store
+				add_to_grid(rocks, {x=i, y=j, type='r'})
 			end
 		end
 	end
@@ -103,14 +137,6 @@ end
 
 function update_bullets()
 	for b in all(bullets) do
-		-- remove bullets that hit the borders
-		if b.x < x_left_edge+2 or b.x > x_right_edge-2 or
-			b.y < y_top_edge+2 or b.y > y_bottom_edge-2 then
-				-- bullet_collide(b)
-				del(bullets,b)
-				return
-		end
-
 		detect_bullet_collision(b)
 
 		-- move bullet
@@ -119,20 +145,13 @@ function update_bullets()
 	end -- for all bullets
 end
 
-function draw_mines() for m in all(mines) do spr_grid(32, m.x, m.y) end end
-function draw_rocks() for r in all(rocks) do spr_grid(9, r.x, r.y) end end
-function draw_bullets()
-	for b in all(bullets) do
-		circfill( b.x, b.y, 1, 7)
-
-		-- DEBUG show the grid
-		b_grid = xy_coords_to_grid(b.x,b.y)
-		grid_nw = grid_nw_corner_xy_coords(b_grid.x, b_grid.y)
-		rect( grid_nw.x, grid_nw.y,
-					grid_nw.x + mine_grid_unit,
-					grid_nw.y + mine_grid_unit, 12 )
-	end
+function draw_mines()
+	for m in all(mines) do spr_grid(32, m.x, m.y) end
+	for t in all(triggered_mines) do spr_grid(33, t.x, t.y) end
 end
+function draw_rocks() for r in all(rocks) do spr_grid(9, r.x, r.y) end end
+function draw_fireballs() for f in all(fireballs) do spr_grid(22, f.x, f.y) end end
+function draw_bullets() for b in all(bullets) do circfill(b.x, b.y, 1, 7) end end
 
 -- spr call converted to grid
 function spr_grid(sprite,grid_x,grid_y)
@@ -160,24 +179,114 @@ function grid_nw_corner_xy_coords(grid_x,grid_y)
 					 y = grid_y*mine_grid_unit + y_top_edge }
 end
 
--- if the tank drives into the mine, do something
-function detect_mine_collisions()
+function explode_thing_at(t, initial_explosionp)
+	if t.type == 'm' then
+		if initial_explosionp then
+			explode_mine(t)
+		else -- if this is a secondary explosion, add to "next clock" instead
+			trigger_mine(t)
+		end
+	elseif t.type == 'r' then
+		explode_rock(t)
+	elseif t.type == 't' then
+		-- do nothing, there is already a triggered mine here
+	elseif t.type == 'f' then
+		-- do nothing, there is already a fireball here
+	else -- nothing was here but put a fireball here
+		spawn_fireball(t.x,t.y)
+	end
+end
+
+-- start the countdown for a mine triggered by a chain reaction
+function trigger_mine(m)
+	del(mines,m)
+	add_to_grid(triggered_mines,{x=m.x,y=m.y,type='t',expiry=clock+mines_timer})
+end
+
+-- detonate this mine right now
+function explode_mine(m)
+	del(mines,m)
+	spawn_fireball(m.x,m.y)
+
+	for n in all(grid_neighbors_of(m.x,m.y)) do
+		explode_thing_at(n, false)
+	end
+end
+
+-- on a delay of mines_timer:
+--   detonate already-triggered mines
+--   remove any aged fireballs
+function update_triggered_mines()
+	for f in all(fireballs) do
+		if f.expiry > clock then break end
+
+		clear_grid(f.x,f.y)
+		del(fireballs, f)
+	end
+
+	for m in all(triggered_mines) do
+		if m.expiry > clock then break end
+		explode_mine(m)
+	end
+end
+
+function explode_rock(r)
+	del(rocks,r)
+	spawn_fireball(r.x,r.y)
+end
+
+-- todo: if the tank drives into a mine or fireball, do something
+function detect_tank_collisions()
+end
+
+-- return true if the values are within the range of the grid dimensions
+function in_grid(x,y)
+	return x>0 and y>0 and x < mines_grid_x_size and y < mines_grid_y_size
+end
+
+-- return an array of up to 9 grid coordinates around x,y
+function grid_neighbors_of(x,y)
+	neighbors = {}
+	leftmost = max(x-1, 1);
+	rightmost = min(x+1, mines_grid_x_size);
+	topmost = max(y-1, 1);
+	bottommost = min(y+1, mines_grid_y_size);
+
+	for i=leftmost,rightmost,1 do
+		for j=topmost,bottommost,1 do
+			add(neighbors,{x=i,y=j})
+		end
+	end
+
+	return neighbors
 end
 
 -- if collided with a mine or a rock, explode, delete and return
 function detect_bullet_collision(b)
-	-- todo 0: make this related to bounding box / grid - "if in the same grid as a"
-	--         to avoid going through entire list of mines/rocks
-	-- todo remove destroyed bullet from grid store
-	-- todo remove destroyed object from grid store
+	bullet_grid = xy_coords_to_grid(b.x,b.y)
+
+	if not in_grid(bullet_grid.x,bullet_grid.y) then
+		del(bullets,b)
+		return
+	end
+
+	target_grid = grid[bullet_grid.x][bullet_grid.y]
+
+	-- todo: edge case for bullet at border
+	-- "if in the same grid as a thing"
+	if target_grid ~= nil then
+		del(bullets,b) -- remove destroyed bullet from grid store
+
+		explode_thing_at(target_grid, true)
+	end
 end
 
--- todo 1 detect rocks in front of the tank
+-- todo detect rocks or wall in front of the tank
 function tank_not_blocked(dir)
 	return true
 end
 
--- todo 2: convert wall detection to use tank_not_blocked
+-- todo convert wall detection to use tank_not_blocked
 mv_tank_helper = {
 	[l] = function() if tank.x > x_left_edge+4 then tank.x = tank.x -1 end end,
 	[r] = function() if tank.x < x_right_edge-4 then tank.x = tank.x +1 end end,
@@ -187,6 +296,7 @@ mv_tank_helper = {
 
 -- calls a table of functions
 -- for the different directions
+-- todo: play motor sound
 function move_tank(n)
 	if tank.t == n and tank_not_blocked(n) then
 		mv_tank_helper[n]()
@@ -218,11 +328,11 @@ function fire_cannon()
 end
 
 function _update()
-
 	clock = clock+1
 
-	-- detect tank hitting a mine
-	detect_mine_collisions()
+	update_triggered_mines()
+
+	detect_tank_collisions()
 
 	-- move the tank for directional buttons
 	if btn(0) then -- left
@@ -233,7 +343,10 @@ function _update()
 		move_tank(u)
 	elseif btn(3) then -- down
 		move_tank(d)
+	else
+		-- todo play motor idle sound
 	end
+
 	set_camera()
 
 	if btnp(5) then fire_cannon() end
@@ -254,6 +367,7 @@ function _draw()
 	draw_rocks()
 	draw_bullets()
 	draw_tank()
+	draw_fireballs()
 
 	-- draw_score()
 end
@@ -275,13 +389,13 @@ __gfx__
 10100000000000000000000000000000000000000000000008080880080080000000000000000000000000000000000000000000000000000000000000000000
 10100000000000000000000000000000000000000000000000880800000000080000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-10010010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-01000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-10181010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-00111000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-01000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-10010010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+10010010600600600000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+01000100060006000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00111000006660000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+10181010606060600000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+00111000006660000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+01000100060006000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+10010010600600600000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
