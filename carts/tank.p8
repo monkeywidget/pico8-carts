@@ -89,9 +89,10 @@ function spawn_tank_and_mines()
 end
 
 function spawn_fireball(i,j)
-	add_to_grid(fireballs,{x=i,y=j,type='f',expiry=clock+mines_timer})
+	add(fireballs,{x=i,y=j,expiry=clock+mines_timer})
 end
 
+-- used only when removing from the grid and not replacing it with anything
 function clear_grid(x, y)
 	grid[x][y] = nil
 end
@@ -153,6 +154,11 @@ function draw_rocks() for r in all(rocks) do spr_grid(9, r.x, r.y) end end
 function draw_fireballs() for f in all(fireballs) do spr_grid(22, f.x, f.y) end end
 function draw_bullets() for b in all(bullets) do circfill(b.x, b.y, 1, 7) end end
 
+-- util method used as grid getter
+function object_at(x,y)
+	return grid[x][y]
+end
+
 -- spr call converted to grid
 function spr_grid(sprite,grid_x,grid_y)
 		xy_coords = grid_nw_corner_xy_coords(grid_x,grid_y)
@@ -179,60 +185,64 @@ function grid_nw_corner_xy_coords(grid_x,grid_y)
 					 y = grid_y*mine_grid_unit + y_top_edge }
 end
 
-function explode_thing_at(t, initial_explosionp)
-	if t.type == 'm' then
+function explode_thing_at(x, y, initial_explosionp)
+	-- play explosion sound
+	sfx(9)
+	spawn_fireball(x,y)
+	target = object_at(x,y)
+
+	-- nothing was here but put a fireball here
+	if target == nil then return end
+
+	if target.type == 'm' then
+		del(mines,target)
 		if initial_explosionp then
-			explode_mine(t)
+			explode_mine(target)
 		else -- if this is a secondary explosion, add to "next clock" instead
-			trigger_mine(t)
+			trigger_mine(target)
 		end
-	elseif t.type == 'r' then
-		explode_rock(t)
-	elseif t.type == 't' then
+	elseif target.type == 'r' then
+		explode_rock(target)
+	elseif target.type == 't' then
 		-- do nothing, there is already a triggered mine here
-	elseif t.type == 'f' then
-		-- do nothing, there is already a fireball here
-	else -- nothing was here but put a fireball here
-		spawn_fireball(t.x,t.y)
+		-- (the clock will get it)
 	end
 end
 
 -- start the countdown for a mine triggered by a chain reaction
 function trigger_mine(m)
-	del(mines,m)
 	add_to_grid(triggered_mines,{x=m.x,y=m.y,type='t',expiry=clock+mines_timer})
 end
 
 -- detonate this mine right now
 function explode_mine(m)
-	del(mines,m)
-	spawn_fireball(m.x,m.y)
-
+	clear_grid(m.x, m.y)
 	for n in all(grid_neighbors_of(m.x,m.y)) do
-		explode_thing_at(n, false)
+		explode_thing_at(n.x, n.y, false)
 	end
 end
 
 -- on a delay of mines_timer:
---   detonate already-triggered mines
 --   remove any aged fireballs
+--   detonate already-triggered mines
 function update_triggered_mines()
 	for f in all(fireballs) do
-		if f.expiry > clock then break end
-
-		clear_grid(f.x,f.y)
-		del(fireballs, f)
+		if f.expiry <= clock then
+			del(fireballs, f)
+		end
 	end
 
-	for m in all(triggered_mines) do
-		if m.expiry > clock then break end
-		explode_mine(m)
+	for t in all(triggered_mines) do
+		if t.expiry <= clock then
+			del(triggered_mines,t)
+			explode_mine(t)
+		end
 	end
 end
 
 function explode_rock(r)
 	del(rocks,r)
-	spawn_fireball(r.x,r.y)
+	clear_grid(r.x, r.y)
 end
 
 -- todo: if the tank drives into a mine or fireball, do something
@@ -270,14 +280,14 @@ function detect_bullet_collision(b)
 		return
 	end
 
-	target_grid = grid[bullet_grid.x][bullet_grid.y]
+	target_grid = object_at(bullet_grid.x,bullet_grid.y)
 
 	-- todo: edge case for bullet at border
 	-- "if in the same grid as a thing"
 	if target_grid ~= nil then
 		del(bullets,b) -- remove destroyed bullet from grid store
 
-		explode_thing_at(target_grid, true)
+		explode_thing_at(target_grid.x, target_grid.y, true)
 	end
 end
 
@@ -546,7 +556,7 @@ __sfx__
 001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+0010000024670156600f67009650066500364003620026200161001610016000160001600016000160000000000000000020600206001b6001660014600000000000000000000000000000000000000000000000
 001000003c6603f670356502963024620116200861002610016100160001600016000160002600016000160002600016000160007600056000460003600016000260002600016000160001600016000000000000
 001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
@@ -666,3 +676,4 @@ __music__
 00 41424344
 00 41424344
 00 41424344
+
