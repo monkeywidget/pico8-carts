@@ -20,6 +20,11 @@ mines_grid_x_size = 32 -- in units
 mines_grid_y_size = 32 -- in units
 mines_timer = 15
 
+mines_counter = 0
+rocks_counter = 0
+game_timer = 120 -- in seconds
+game_score = 0
+
 -- board - the green area, which we never see outside of
 --- some of which is off screen
 --- the playfield has a margin around it to fill the board
@@ -110,8 +115,8 @@ function cell_random_spawn_mines()
 	rock_probability = 0.25
 
 	-- for every grid x and y coordinates:
-	for i=1,(mines_grid_x_size-2) do
-		for j=1,(mines_grid_y_size-2) do
+	for i=1,(mines_grid_x_size) do
+		for j=1,(mines_grid_y_size) do
 			lotto = rnd(1)
 
 			-- don't put mines within 3 units of initial tank position
@@ -121,8 +126,10 @@ function cell_random_spawn_mines()
 				-- do nothing (there is no "continue" in lua)
 			elseif lotto < mine_probability then
 				add_to_grid(mines, {x=i, y=j, type='m'})
+				mines_counter += 1
 			elseif lotto < rock_probability + mine_probability then
 				add_to_grid(rocks, {x=i, y=j, type='r'})
+				rocks_counter += 1
 			end
 		end
 	end
@@ -157,6 +164,15 @@ function draw_rocks() for r in all(rocks) do spr_grid(3, r.x, r.y) end end
 function draw_fireballs() for f in all(fireballs) do spr_grid(2, f.x, f.y) end end
 function draw_bullets() for b in all(bullets) do circfill(b.x, b.y, 1, 1) end end
 
+function draw_score()
+	-- background for scoreboard
+	-- rectfill(0, 0, board_size_x, board_size_y, 3) -- solid playfield
+	-- rect(x_left_edge, y_top_edge, x_right_edge, y_bottom_edge, 1 ) -- borders are inset from the edge
+
+	-- score = 1234
+	-- print('score: '..score, 0, 120, 8)
+end
+
 -- util method used as grid getter
 function object_at(x,y)
 	return grid[x][y]
@@ -171,21 +187,25 @@ end
 -- convert pixel coords to grid coordinates
 -- which will lets sort the objects by location,
 -- which will enable bounding-box
+-- remember Lua arrays are 1-indexed
 function xy_coords_to_grid(x,y)
-	return { x = flr((x - x_left_edge) / mine_grid_unit),
-					 y = flr((y - y_top_edge) / mine_grid_unit) }
+	return { x = flr((x - x_left_edge) / mine_grid_unit) + 1,
+					 y = flr((y - y_top_edge) / mine_grid_unit) + 1 }
 end
 
 -- return the x,y of a cell center
+-- remember Lua arrays are 1-indexed
+-- TODO: includes most of the same calculation from grid_nw_corner_xy_coords
 function grid_center_xy_coords(grid_x,grid_y)
-	return { x = grid_x*mine_grid_unit + x_left_edge + mine_grid_unit/2,
-					 y = grid_y*mine_grid_unit + y_top_edge + mine_grid_unit/2 }
+	return { x = (grid_x-1)*mine_grid_unit + x_left_edge + mine_grid_unit/2,
+					 y = (grid_y-1)*mine_grid_unit + y_top_edge + mine_grid_unit/2 }
 end
 
 -- return the x,y of a cell upper left
+-- remember Lua arrays are 1-indexed
 function grid_nw_corner_xy_coords(grid_x,grid_y)
-	return { x = grid_x*mine_grid_unit + x_left_edge,
-					 y = grid_y*mine_grid_unit + y_top_edge }
+	return { x = (grid_x-1)*mine_grid_unit + x_left_edge,
+					 y = (grid_y-1)*mine_grid_unit + y_top_edge }
 end
 
 function explode_thing_at(x, y, initial_explosionp)
@@ -198,6 +218,8 @@ function explode_thing_at(x, y, initial_explosionp)
 
 	if target.type == 'm' then
 		del(mines,target)
+		mines_counter -= 1
+
 		if initial_explosionp then
 			explode_mine(target)
 		else -- if this is a secondary explosion, add to "next clock" instead
@@ -248,6 +270,8 @@ end
 
 function explode_rock(r)
 	del(rocks,r)
+	rocks_counter -= 1
+
 	clear_grid(r.x, r.y)
 end
 
@@ -257,16 +281,16 @@ end
 
 -- return true if the values are within the range of the grid dimensions
 function in_grid(x,y)
-	return x>0 and y>0 and x < mines_grid_x_size and y < mines_grid_y_size
+	return x>0 and y>0 and x <= mines_grid_x_size and y <= mines_grid_y_size
 end
 
--- return an array of up to 9 grid coordinates around x,y
-function grid_neighbors_of(x,y)
+-- return an array of up to 9 grid coordinates around grid_x,grid_y
+function grid_neighbors_of(grid_x,grid_y)
 	neighbors = {}
-	leftmost = max(x-1, 1);
-	rightmost = min(x+1, mines_grid_x_size);
-	topmost = max(y-1, 1);
-	bottommost = min(y+1, mines_grid_y_size);
+	leftmost = max(grid_x-1, 1);
+	rightmost = min(grid_x+1, mines_grid_x_size);
+	topmost = max(grid_y-1, 1);
+	bottommost = min(grid_y+1, mines_grid_y_size);
 
 	for i=leftmost,rightmost,1 do
 		for j=topmost,bottommost,1 do
@@ -369,14 +393,18 @@ function _update()
 	update_bullets()
 end
 
-function playfield()
-  rectfill(0, 0, board_size_x, board_size_y, 3) -- solid playfield
-	rect(x_left_edge, y_top_edge, x_right_edge, y_bottom_edge, 1 ) -- borders are inset from the edge
+-- draw the dark border around the playfield,
+-- then draw the playfield where the tank and mines are
+-- note: the sprites are 1 pixel right and down,
+--   so we adjust the border accordingly to make it look even on all sides
+function draw_playfield()
+  rectfill(0, 0, board_size_x, board_size_y, 1) -- solid playfield
+	rectfill(x_left_edge-2, y_top_edge-2, x_right_edge+1, y_bottom_edge+1, 3 ) --  inset from the edge
 end
 
 function _draw()
-	cls()
-	playfield()
+	cls() -- clears everything
+	draw_playfield()
 
 	draw_mines()
 	draw_rocks()
@@ -384,7 +412,7 @@ function _draw()
 	draw_tank()
 	draw_fireballs()
 
-	-- draw_score()
+	draw_score()
 end
 __gfx__
 00111111000010000088080000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
